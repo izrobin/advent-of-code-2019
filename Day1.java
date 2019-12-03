@@ -4,6 +4,8 @@ import java.util.List;
 
 class Day1 {
 
+    private static final boolean USE_FUEL_FOR_FUEL_MASS = false; //This is part 1 = false / part 2 = true of the puzzle
+
     public static void main(final String[] args) throws Exception {
         final List<Integer> input = getInput();
 
@@ -19,6 +21,9 @@ class Day1 {
         final BigDecimal fuel = mass
             .divide(BigDecimal.valueOf(3), RoundingMode.DOWN)
             .subtract(BigDecimal.valueOf(2));
+        if (!USE_FUEL_FOR_FUEL_MASS) {
+            return fuel;
+        }
         if (fuel.compareTo(BigDecimal.ZERO) >= 0) {
             return fuel.add(getFuel(fuel));
         }

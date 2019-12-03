@@ -2,33 +2,39 @@ import java.util.Arrays;
 
 class Day2 {
 
+    private static final boolean PUZZLE_PART_2 = true;
     private static final int EXPECTED_RESULT = 19690720;
 
     public static void main(final String[] args) {
-        outerloop:
+        if (!PUZZLE_PART_2) {
+            final int result = runProgram(12, 2, getInstructions());
+            System.out.println(result);
+            System.exit(0);
+        }
+
         for (int noun = 0; noun < 100; noun++) {
             for (int verb = 0; verb < 100; verb++) {
-
-                //Get a set of fresh instructions
-                final int[] instructions = getInstructions();
-                //Set init params
-                instructions[1] = noun;
-                instructions[2] = verb;
-
-                final int result = runProgram(instructions);
-                System.out.println(Arrays.toString(instructions));
+                final int result = runProgram(noun, verb, getInstructions());
 
                 if (result == EXPECTED_RESULT) {
-                    System.out.println("WINNING: ");
+                    System.out.println("WINNING: " + result);
                     System.out.println("noun: " + noun);
                     System.out.println("verb: " + verb);
-                    break outerloop;
+                    System.exit(0);
                 }
             }
         }
     }
 
-    private static int runProgram(int[] instructions) {
+    private static int runProgram(
+        final int noun,
+        final int verb,
+        int[] instructions
+    ) {
+        //Set init values
+        instructions[1] = noun;
+        instructions[2] = verb;
+
         int pos = 0;
         while (pos < instructions.length) {
             final int currentInstruction = instructions[pos];

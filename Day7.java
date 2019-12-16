@@ -1,337 +1,222 @@
+import static java.util.stream.Collectors.toList;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 class Day7 {
+
     public static void main(final String[] args) throws Exception {
+        final Stream<Stream<Integer>> permutationsStream = Permutations.of(Arrays.asList(9, 7, 8, 5, 6));
+        final List<List<Integer>> permutations = permutationsStream.map(p -> p.collect(toList())).collect(toList());
+
         int currentHighscore = 0;
 
-        final Stream<Stream<Integer>> permutationsStream = Permutations.of(Arrays.asList(5,6,7,8,9));
-        final List<List<Integer>> permutations = permutationsStream.map(p -> p.collect(Collectors.toList())).collect(Collectors.toList());
-
         for (final List<Integer> parameters : permutations) {
-            final ProgramIo[] ampsAndIo = new ProgramIo[]{
-                new ProgramIo(parameters.get(0)),
-                new ProgramIo(parameters.get(1)),
-                new ProgramIo(parameters.get(2)),
-                new ProgramIo(parameters.get(3)),
-                new ProgramIo(parameters.get(4))
-            };
-            final int[][] instructions = new int[][]{
-                getInstructions(getInput()),
-                getInstructions(getInput()),
-                getInstructions(getInput()),
-                getInstructions(getInput()),
-                getInstructions(getInput())
-            };
+            final List<IntComp> amplifiers = List.of(
+                new IntComp(getInstructions(getInput())),
+                new IntComp(getInstructions(getInput())),
+                new IntComp(getInstructions(getInput())),
+                new IntComp(getInstructions(getInput())),
+                new IntComp(getInstructions(getInput()))
+            );
 
-            final CountDownLatch latch = new CountDownLatch(ampsAndIo.length);
-            boolean firstRun = true;
-            for (int i = 0; i < ampsAndIo.length; i++) {
-                final ProgramIo ampIo = ampsAndIo[i];
-                if (i == 0 && firstRun) {
-                    // First run, let's give it a zero to kickstart it
-                    ampIo.registerInput(0);
-                } else if (i == 0) {
-                    // First amp, get the last amps output
-                    ampIo.registerInput(ampsAndIo[ampsAndIo.length - 1].getOutput());
-                } else {
-                    // Get the previous amps output
-                    ampIo.registerInput(ampsAndIo[i - 1].getOutput());
+            amplifiers.get(0).addInput(parameters.get(0));
+            amplifiers.get(1).addInput(parameters.get(1));
+            amplifiers.get(2).addInput(parameters.get(2));
+            amplifiers.get(3).addInput(parameters.get(3));
+            amplifiers.get(4).addInput(parameters.get(4));
+
+            for (int i = 0; i < amplifiers.size(); i++) {
+                final int previousIdx = i == 0 ? amplifiers.size() - 1 : i - 1;
+                final IntComp amplifier = amplifiers.get(i);
+                final IntComp previousAmp = amplifiers.get(previousIdx);
+
+                final int previousAmpOutput = coalesce(previousAmp.output.poll());
+                amplifier.addInput(previousAmpOutput);
+
+                while (amplifier.hasMoreInstructions()) {
+                    amplifier.step();
                 }
 
-                if (firstRun) {
-                    final int finalInt = i;
-                    new Thread(() -> runProgram(instructions[finalInt], ampIo, latch)).start();
-                }
-
-                if (i == ampsAndIo.length - 1) {
-                    final boolean latchDone = latch.await(10, TimeUnit.MILLISECONDS);
-
-                    if (!latchDone) {
-                        //We're not done yet!
-                        //Reset i so loop can start over
-                        firstRun = false;
-                        i = -1;
-                    } else {
-                        final int output = ampIo.getOutput();
+                if (i == amplifiers.size() - 1) {
+                    // Last amp
+                    final Integer output = amplifier.output.peek();
+                    System.out.println("AMP E OUTPUT: " + output);
+                    // Did it halt? eg not waiting for Amp D output? If so, we're done with this permutation entry
+                    if (amplifier.terminated) {
+                        System.out.println("TERMINATED! Run next itr");
                         if (output > currentHighscore) {
                             currentHighscore = output;
-                            System.out.println("CURRENT HIGHSCORE: " + currentHighscore);
                         }
-                        break;
+                    } else {
+                        // Amp is waiting for more input, as it's halted but not terminated. Loop again
+                        i = -1; // Restart loop
                     }
                 }
             }
         }
 
-        System.out.println("SUPER DUPER: " + currentHighscore);
+        System.out.println();
+        System.out.println("WINNING HIGHSCORE: " + currentHighscore);
     }
 
-    private static void runProgram(
-        final int[] instructions,
-        final ProgramIo programIo,
-        final CountDownLatch latch
-    ) {
-        int pos = 0;
-        while (pos < instructions.length) {
-            final int currentInstruction = instructions[pos];
-            final String currentInstrStr = String.valueOf(currentInstruction);
-            if (currentInstrStr.endsWith("1")) {
-                pos += doAddition(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("2")) {
-                pos += doMultiplication(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("3")) {
-                pos += doInput(currentInstrStr, instructions, pos, programIo);
-            } else if (currentInstrStr.endsWith("4")) {
-                pos += doOutput(currentInstrStr, instructions, pos, programIo);
-            } else if (currentInstrStr.endsWith("5")) {
-                pos += jumpIfTrue(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("6")) {
-                pos += jumpIfFalse(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("7")) {
-                pos += ifLt(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("8")) {
-                pos += ifEq(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("99")) {
-                latch.countDown();
-                break;
-            } else {
-                throw new IllegalArgumentException("Invalid opcode: " + currentInstrStr);
+    private static int coalesce(final Integer v) {
+        return v == null ? 0 : v;
+    }
+
+    private static class IntComp {
+        private int pos = 0;
+        private int rbase = 0;
+        private boolean halted = false;
+        private boolean terminated = false;
+        private final int[] instructions;
+        private final Queue<Integer> input = new ArrayBlockingQueue<>(10);
+        private final Queue<Integer> output = new ArrayBlockingQueue<>(10);
+
+        private IntComp(final int[] instructions) {
+            this.instructions = instructions;
+        }
+
+        public boolean hasMoreInstructions() {
+            return pos < instructions.length && !halted && !terminated;
+        }
+
+        public void step() throws Exception {
+            final int instr = instructions[pos];
+            final Op opCode = Op.of(instr % 100);
+            final int[] parameters = Arrays.copyOfRange(instructions, pos + 1, pos + 1 + opCode.parameters);
+            final int[] paramModes = parseParamModes(instr, opCode.parameters);
+
+            doOp(opCode, parameters, paramModes);
+        }
+
+        void addInput(final int inp) {
+            this.input.add(inp);
+            this.halted = false;
+        }
+
+        private void doOp(
+            final Op opCode,
+            final int[] params,
+            final int[] modes
+        ) throws Exception {
+            if (Op.ADD == opCode) {
+                final int result = read(params[0], modes[0]) + read(params[1], modes[1]);
+                write(params[2], modes[2], result);
+            } else if (Op.MUL == opCode) {
+                final int result = read(params[0], modes[0]) * read(params[1], modes[1]);
+                write(params[2], modes[2], result);
+            } else if (Op.INPUT == opCode) {
+                final Integer input = this.input.poll();
+                if (input == null) {
+                    halted = true;
+                } else {
+                    write(params[0], modes[0], input);
+                }
+            } else if (Op.OUTPUT == opCode) {
+                final Integer output = read(params[0], modes[0]);
+                this.output.add(output);
+            } else if (Op.JIT == opCode) {
+                final boolean jump = read(params[0], modes[0]) > 0;
+                if (jump) {
+                    pos = read(params[1], modes[1]) - params.length - 1;
+                }
+            } else if (Op.JIF == opCode) {
+                final boolean jump = read(params[0], modes[0]) == 0;
+                if (jump) {
+                    pos = read(params[1], modes[1]) - params.length - 1;
+                }
+            } else if (Op.LT == opCode) {
+                final int bit = read(params[0], modes[0]) < read(params[1], modes[1]) ? 1 : 0;
+                write(params[2], modes[2], bit);
+            } else if (Op.EQ == opCode) {
+                final int bit = read(params[0], modes[0]) == read(params[1], modes[1]) ? 1 : 0;
+                write(params[2], modes[2], bit);
+            } else if (Op.HALT == opCode) {
+                halted = true;
+                terminated = true;
+            }
+
+            if (!halted) {
+                pos += params.length + 1;
             }
         }
-    }
 
-    private static class ProgramIo {
-        private final BlockingQueue<Integer> inputs = new ArrayBlockingQueue<>(10, true);
-        private final BlockingQueue<Integer> outputs = new ArrayBlockingQueue<>(10, true);
+        private int[] parseParamModes(final int instr, final int parameters) {
+            final int[] modes = new int[parameters];
+            final int instrParams = instr / 100;
+            final char[] instrC = String.valueOf(instrParams).toCharArray();
 
-        ProgramIo(final int... initialInputs) {
-            for (final int initialInput : initialInputs) {
-                registerInput(initialInput);
+            for (int i = 0; i < parameters; i++) {
+                final int rev = instrC.length - i - 1;
+                if (rev >= 0) {
+                    modes[i] = Character.getNumericValue(instrC[rev]);
+                } else {
+                    modes[i] = 0;
+                }
             }
+            return modes;
         }
 
-        int readInput() {
-            try {
-                return inputs.take();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
+        int read(final int pos, final int mode) {
+            switch (mode) {
+                case 0:
+                    return instructions[pos];
+                case 1:
+                    return pos;
+                case 2:
+                    return instructions[pos + rbase];
             }
+            throw new IllegalArgumentException("Unknown mode: " + mode);
         }
 
-        int getOutput() {
-            try {
-                return outputs.take();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        void registerOutput(final int output) {
-            outputs.add(output);
-            System.out.println("OUTPUT REGISTERED: " + output);
-        }
-
-        void registerInput(final int input) {
-            inputs.add(input);
+        void write(final int pos, final int mode, final int inp) {
+            instructions[pos] = inp;
         }
     }
 
-    private static int doAddition(
-        final String currentInstr,
-        final int[] instructions,
-        final int currentPos
-    ) {
-        final int paramLength = 3;
-        final Parameter[] parsedParams = parseParameters(currentInstr, instructions, currentPos, paramLength);
+    private enum Op {
+        ADD(1, 3),
+        MUL(2, 3),
+        INPUT(3, 1),
+        OUTPUT(4, 1),
+        JIT(5, 2),
+        JIF(6, 2),
+        LT(7, 3),
+        EQ(8, 3),
+        RBASE(9, 1),
+        HALT(99, 0);
 
-        final int val1 = parsedParams[0].readValue(instructions);
-        final int val2 = parsedParams[1].readValue(instructions);
-        final int resultPos = parsedParams[2].getRawValue();
+        private final int opCode;
+        private final int parameters;
 
-        instructions[resultPos] = val1 + val2;
-        return paramLength + 1;
-    }
-
-    private static int doMultiplication(
-        final String currentInstr,
-        final int[] instructions,
-        final int currentPos
-    ) {
-        final int paramLength = 3;
-        final Parameter[] parsedParams = parseParameters(currentInstr, instructions, currentPos, paramLength);
-
-        final int val1 = parsedParams[0].readValue(instructions);
-        final int val2 = parsedParams[1].readValue(instructions);
-        final int resultPos = parsedParams[2].getRawValue();
-
-        instructions[resultPos] = val1 * val2;
-        return paramLength + 1;
-    }
-
-    private static int doInput(
-        final String currentInstrStr,
-        final int[] instructions,
-        final int pos,
-        final ProgramIo programIo
-    ) {
-        final int readVal = programIo.readInput();
-        final int resultPos = instructions[pos + currentInstrStr.length()];
-        instructions[resultPos] = readVal;
-
-        return 2;
-    }
-
-    private static int doOutput(
-        final String currentInstrStr,
-        final int[] instructions,
-        final int pos,
-        final ProgramIo programIo
-    ) {
-        final Parameter[] parsedParams = parseParameters(currentInstrStr, instructions, pos, 1);
-        final int result = parsedParams[0].readValue(instructions);
-        programIo.registerOutput(result);
-
-        return 2;
-    }
-
-    private static int jumpIfTrue(final String currentInstrStr, final int[] instructions, final int pos) {
-        final Parameter[] parsedParams = parseParameters(currentInstrStr, instructions, pos, 2);
-        final boolean jump = parsedParams[0].readValue(instructions) > 0;
-        if (jump) {
-            return -pos + parsedParams[1].readValue(instructions);
+        Op(final int opCode, final int parameters) {
+            this.opCode = opCode;
+            this.parameters = parameters;
         }
-        return 3;
-    }
 
-    private static int jumpIfFalse(final String currentInstrStr, final int[] instructions, final int pos) {
-        final Parameter[] parsedParams = parseParameters(currentInstrStr, instructions, pos, 2);
-        final boolean jump = parsedParams[0].readValue(instructions) == 0;
-        if (jump) {
-            return -pos + parsedParams[1].readValue(instructions);
+        static Op of(final int opCode) {
+            return Stream.of(values()).filter(o -> o.opCode == opCode)
+                .findFirst()
+                .orElse(HALT);
         }
-        return 3;
     }
 
-    private static int ifLt(final String currentInstrStr, final int[] instructions, final int pos) {
-        final Parameter[] parsedParams = parseParameters(currentInstrStr, instructions, pos, 3);
-
-        final int val1 = parsedParams[0].readValue(instructions);
-        final int val2 = parsedParams[1].readValue(instructions);
-        final int resultPos = parsedParams[2].getRawValue(); //???
-
-        final int result = val1 < val2 ? 1 : 0;
-        instructions[resultPos] = result;
-        return 4;
-    }
-
-    private static int ifEq(final String currentInstrStr, final int[] instructions, final int pos) {
-        final Parameter[] parsedParams = parseParameters(currentInstrStr, instructions, pos, 3);
-
-        final int val1 = parsedParams[0].readValue(instructions);
-        final int val2 = parsedParams[1].readValue(instructions);
-        final int resultPos = parsedParams[2].getRawValue(); //???
-
-        final int result = val1 == val2 ? 1 : 0;
-        instructions[resultPos] = result;
-        return 4;
-    }
-
-    private static Parameter[] parseParameters(
-        final String currentInstr,
-        final int[] instructions,
-        final int currentPos,
-        final int paramLength
-    ) {
-        final int[] paramModes = parseParameterModes(currentInstr, paramLength);
-        final Parameter[] parsedParams = new Parameter[paramLength];
-
-        for (int i = 0; i < paramLength; i++) {
-            final int readFromPos = currentPos + 1 + i;
-            final int paramMode = paramModes[i];
-            parsedParams[i] = Parameter.of(paramMode, instructions[readFromPos]);
-        }
-        return parsedParams;
-    }
-
-    private static int[] parseParameterModes(final String currentInstr, final int paramLength) {
-        final int[] paramModes = new int[paramLength];
-        if (currentInstr.length() == 1) {
-            //Single digit opcode, return an int array of zeroes (addr based modes)
-            return paramModes;
-        }
-        // Remove opcode from instruction
-        final char[] instrs = currentInstr.substring(0, currentInstr.length() - 2).toCharArray();
-        for (int i = 0; i < instrs.length; i++) {
-            // Read array backwards (right to left)
-            final char paramMode = instrs[instrs.length - i - 1];
-            // Put value from left to right in array (to match actual arg positions)
-            paramModes[i] = Character.getNumericValue(paramMode);
-        }
-        return paramModes;
-    }
-
-    private static int[] getInstructions(final String i) {
-        return Arrays.stream(i.split(","))
+    private static int[] getInstructions(final String input) {
+        return Arrays.stream(input.split(","))
             .mapToInt(Integer::parseInt)
             .toArray();
     }
 
-    private abstract static class Parameter {
-        private final int value;
-
-        private Parameter(final int value) {
-            this.value = value;
-        }
-
-        private static Parameter of(final int mode, final int value) {
-            if (mode == 0) {
-                return new AddrPointer(value);
-            }
-            return new AbsoluteValue(value);
-        }
-
-        abstract int readValue(final int[] instructions);
-
-        int getRawValue() {
-            return this.value;
-        }
-    }
-
-    private static class AddrPointer extends Parameter {
-        private AddrPointer(final int address) {
-            super(address);
-        }
-
-        @Override
-        public int readValue(int[] instructions) {
-            return instructions[getRawValue()];
-        }
-    }
-
-    private static class AbsoluteValue extends Parameter {
-        AbsoluteValue(final int value) {
-            super(value);
-        }
-
-        @Override
-        public int readValue(int[] instructions) {
-            return getRawValue();
-        }
-    }
-
     private static String getTestInputP1() {
-        return "3,23,3,24,1002,24,10,24,1002,23,-1,23,"
-            + "101,5,23,23,1,24,23,23,4,23,99,0,0";
+        return "3,31,3,32,1002,32,10,32,1001,31,-2,31,1007,31,0,33,"
+            + "1002,33,7,33,1,33,31,31,1,32,31,31,4,31,99,0,0,0";
     }
 
     private static String getTestInputP2() {
@@ -377,6 +262,5 @@ class Day7 {
         private static <T> List<T> permutation(final int count, final List<T> items) {
             return permutation(count, new LinkedList<>(items), new ArrayList<>());
         }
-
     }
 }

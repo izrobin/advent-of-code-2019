@@ -1,234 +1,157 @@
 import java.util.Arrays;
-import java.util.Scanner;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.stream.Stream;
 
 class Day5 {
 
-    public static void main(final String[] args) {
-        final int result = runProgram(getInstructions());
-        System.out.println(result);
-    }
+    public static void main(final String[] args) throws Exception {
+        final int[] input = getInstructions(getInput());
+        final IntComp comp = new IntComp(input);
 
-    private static int runProgram(
-        final int[] instructions,
-        final int... args
-    ) {
-        for (int i = 0; i < args.length; i++) {
-            instructions[i + 1] = args[i];
+        comp.input.add(5);
+        
+        while (comp.hasMoreInstructions()) {
+            comp.step();
         }
 
-        int pos = 0;
-        while (pos < instructions.length) {
-            final int currentInstruction = instructions[pos];
-            final String currentInstrStr = String.valueOf(currentInstruction);
-            if (currentInstrStr.endsWith("1")) {
-                pos += doAddition(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("2")) {
-                pos += doMultiplication(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("3")) {
-                pos += doInput(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("4")) {
-                pos += doOutput(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("5")) {
-                pos += jumpIfTrue(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("6")) {
-                pos += jumpIfFalse(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("7")) {
-                pos += ifLt(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("8")) {
-                pos += ifEq(currentInstrStr, instructions, pos);
-            } else if (currentInstrStr.endsWith("99")) {
-                break;
-            } else {
-                throw new IllegalArgumentException("Invalid opcode: " + currentInstrStr);
+        System.out.println(comp.output);
+    }
+
+    private static class IntComp {
+        private int pos = 0;
+        private int rbase = 0;
+        private boolean halted = false;
+        private final int[] instructions;
+        private final BlockingQueue<Integer> input = new ArrayBlockingQueue<>(10);
+        private final BlockingQueue<Integer> output = new ArrayBlockingQueue<>(10);
+
+        private IntComp(final int[] instructions) {
+            this.instructions = instructions;
+        }
+
+        public boolean hasMoreInstructions() {
+            return pos < instructions.length && !halted;
+        }
+
+        public void step() throws Exception {
+            final int instr = instructions[pos];
+            final Op opCode = Op.of(instr % 100);
+            final int[] parameters = Arrays.copyOfRange(instructions, pos + 1, pos + 1 + opCode.parameters);
+            final int[] paramModes = parseParamModes(instr, opCode.parameters);
+
+            doOp(opCode, parameters, paramModes);
+        }
+
+        private void doOp(
+            final Op opCode,
+            final int[] params,
+            final int[] modes
+        ) throws Exception {
+            if (Op.ADD == opCode) {
+                final int result = read(params[0], modes[0]) + read(params[1], modes[1]);
+                write(params[2], modes[2], result);
+            } else if (Op.MUL == opCode) {
+                final int result = read(params[0], modes[0]) * read(params[1], modes[1]);
+                write(params[2], modes[2], result);
+            } else if (Op.INPUT == opCode) {
+                final Integer input = this.input.take();
+                write(params[0], modes[0], input);
+            } else if (Op.OUTPUT == opCode) {
+                final Integer output = read(params[0], modes[0]);
+                this.output.add(output);
+            } else if (Op.JIT == opCode) {
+                final boolean jump = read(params[0], modes[0]) > 0;
+                if (jump) {
+                    pos = read(params[1], modes[1]) - params.length - 1;
+                }
+            } else if (Op.JIF == opCode) {
+                final boolean jump = read(params[0], modes[0]) == 0;
+                if (jump) {
+                    pos = read(params[1], modes[1]) - params.length - 1;
+                }
+            } else if (Op.LT == opCode) {
+                final int bit = read(params[0], modes[0]) < read(params[1], modes[1]) ? 1 : 0;
+                write(params[2], modes[2], bit);
+            } else if (Op.EQ == opCode) {
+                final int bit = read(params[0], modes[0]) == read(params[1], modes[1]) ? 1 : 0;
+                write(params[2], modes[2], bit);
+            } else if (Op.HALT == opCode) {
+                halted = true;
+                return;
             }
+
+            pos += params.length + 1;
         }
 
-        System.out.println(Arrays.toString(instructions));
-        return instructions[0];
-    }
+        private int[] parseParamModes(final int instr, final int parameters) {
+            final int[] modes = new int[parameters];
+            final int instrParams = instr / 100;
+            final char[] instrC = String.valueOf(instrParams).toCharArray();
 
-    private static int doAddition(
-        final String currentInstr,
-        final int[] instructions,
-        final int currentPos
-    ) {
-        final int paramLength = 3;
-        final Parameter[] parsedParams = parseParameters(currentInstr, instructions, currentPos, paramLength);
-
-        final int val1 = parsedParams[0].readValue(instructions);
-        final int val2 = parsedParams[1].readValue(instructions);
-        final int resultPos = parsedParams[2].getRawValue();
-
-        instructions[resultPos] = val1 + val2;
-        return paramLength + 1;
-    }
-
-    private static int doMultiplication(
-        final String currentInstr,
-        final int[] instructions,
-        final int currentPos
-    ) {
-        final int paramLength = 3;
-        final Parameter[] parsedParams = parseParameters(currentInstr, instructions, currentPos, paramLength);
-
-        final int val1 = parsedParams[0].readValue(instructions);
-        final int val2 = parsedParams[1].readValue(instructions);
-        final int resultPos = parsedParams[2].getRawValue();
-
-        instructions[resultPos] = val1 * val2;
-        return paramLength + 1;
-    }
-
-    private static int doInput(
-        final String currentInstrStr,
-        final int[] instructions,
-        final int pos
-    ) {
-        final Scanner scanner = new Scanner(System.in);
-
-        System.out.print("Enter input: ");
-        final int readVal = Integer.parseInt(scanner.nextLine());
-        final int resultPos = instructions[pos + currentInstrStr.length()];
-        instructions[resultPos] = readVal;
-
-        return 2;
-    }
-
-    private static int doOutput(
-        final String currentInstrStr,
-        final int[] instructions,
-        final int pos
-    ) {
-        final Parameter[] parsedParams = parseParameters(currentInstrStr, instructions, pos, 1);
-        final int result = parsedParams[0].readValue(instructions);
-        System.out.println("OUTPUT: " + result);
-
-        return 2;
-    }
-
-    private static int jumpIfTrue(final String currentInstrStr, final int[] instructions, final int pos) {
-        final Parameter[] parsedParams = parseParameters(currentInstrStr, instructions, pos, 2);
-        final boolean jump = parsedParams[0].readValue(instructions) > 0;
-        if (jump) {
-            return -pos + parsedParams[1].readValue(instructions);
+            for (int i = 0; i < parameters; i++) {
+                final int rev = instrC.length - i - 1;
+                if (rev >= 0) {
+                    modes[i] = Character.getNumericValue(instrC[rev]);
+                } else {
+                    modes[i] = 0;
+                }
+            }
+            return modes;
         }
-        return 3;
-    }
 
-    private static int jumpIfFalse(final String currentInstrStr, final int[] instructions, final int pos) {
-        final Parameter[] parsedParams = parseParameters(currentInstrStr, instructions, pos, 2);
-        final boolean jump = parsedParams[0].readValue(instructions) == 0;
-        if (jump) {
-            return -pos + parsedParams[1].readValue(instructions);
+        int read(final int pos, final int mode) {
+            switch (mode) {
+                case 0:
+                    return instructions[pos];
+                case 1:
+                    return pos;
+                case 2:
+                    return instructions[pos + rbase];
+            }
+            throw new IllegalArgumentException("Unknown mode: " + mode);
         }
-        return 3;
-    }
 
-    private static int ifLt(final String currentInstrStr, final int[] instructions, final int pos) {
-        final Parameter[] parsedParams = parseParameters(currentInstrStr, instructions, pos, 3);
-
-        final int val1 = parsedParams[0].readValue(instructions);
-        final int val2 = parsedParams[1].readValue(instructions);
-        final int resultPos = parsedParams[2].getRawValue(); //???
-
-        final int result = val1 < val2 ? 1 : 0;
-        instructions[resultPos] = result;
-        return 4;
-    }
-
-    private static int ifEq(final String currentInstrStr, final int[] instructions, final int pos) {
-        final Parameter[] parsedParams = parseParameters(currentInstrStr, instructions, pos, 3);
-
-        final int val1 = parsedParams[0].readValue(instructions);
-        final int val2 = parsedParams[1].readValue(instructions);
-        final int resultPos = parsedParams[2].getRawValue(); //???
-
-        final int result = val1 == val2 ? 1 : 0;
-        instructions[resultPos] = result;
-        return 4;
-    }
-
-    private static Parameter[] parseParameters(
-        final String currentInstr,
-        final int[] instructions,
-        final int currentPos,
-        final int paramLength
-    ) {
-        final int[] paramModes = parseParameterModes(currentInstr, paramLength);
-        final Parameter[] parsedParams = new Parameter[paramLength];
-
-        for (int i = 0; i < paramLength; i++) {
-            final int readFromPos = currentPos + 1 + i;
-            final int paramMode = paramModes[i];
-            parsedParams[i] = Parameter.of(paramMode, instructions[readFromPos]);
+        void write(final int pos, final int mode, final int inp) {
+            instructions[pos] = inp;
         }
-        return parsedParams;
     }
 
-    private static int[] parseParameterModes(final String currentInstr, final int paramLength) {
-        final int[] paramModes = new int[paramLength];
-        if (currentInstr.length() == 1) {
-            //Single digit opcode, return an int array of zeroes (addr based modes)
-            return paramModes;
+    private enum Op {
+        ADD(1, 3),
+        MUL(2, 3),
+        INPUT(3, 1),
+        OUTPUT(4, 1),
+        JIT(5, 2),
+        JIF(6, 2),
+        LT(7, 3),
+        EQ(8, 3),
+        RBASE(9, 1),
+        HALT(99, 0);
+
+        private final int opCode;
+        private final int parameters;
+
+        Op(final int opCode, final int parameters) {
+            this.opCode = opCode;
+            this.parameters = parameters;
         }
-        // Remove opcode from instruction
-        final char[] instrs = currentInstr.substring(0, currentInstr.length() - 2).toCharArray();
-        for (int i = 0; i < instrs.length; i++) {
-            // Read array backwards (right to left)
-            final char paramMode = instrs[instrs.length - i - 1];
-            // Put value from left to right in array (to match actual arg positions)
-            paramModes[i] = Character.getNumericValue(paramMode);
+
+        static Op of(final int opCode) {
+            return Stream.of(values()).filter(o -> o.opCode == opCode)
+                .findFirst()
+                .orElse(HALT);
         }
-        return paramModes;
     }
 
-    private static int[] getInstructions() {
-        return Arrays.stream(getInput().split(","))
+    private static int[] getInstructions(final String input) {
+        return Arrays.stream(input.split(","))
             .mapToInt(Integer::parseInt)
             .toArray();
     }
 
-    private abstract static class Parameter {
-        private final int value;
-
-        private Parameter(final int value) {
-            this.value = value;
-        }
-
-        private static Parameter of(final int mode, final int value) {
-            if (mode == 0) {
-                return new AddrPointer(value);
-            }
-            return new AbsoluteValue(value);
-        }
-
-        abstract int readValue(final int[] instructions);
-
-        int getRawValue() {
-            return this.value;
-        }
-    }
-
-    private static class AddrPointer extends Parameter {
-        private AddrPointer(final int address) {
-            super(address);
-        }
-
-        @Override
-        public int readValue(int[] instructions) {
-            return instructions[getRawValue()];
-        }
-    }
-
-    private static class AbsoluteValue extends Parameter {
-        AbsoluteValue(final int value) {
-            super(value);
-        }
-
-        @Override
-        public int readValue(int[] instructions) {
-            return getRawValue();
-        }
+    private static String getTestInput() {
+        return "3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9";
     }
 
     private static String getInput() {
